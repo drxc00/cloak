@@ -1,4 +1,4 @@
-package redact_test
+package tests
 
 import (
 	"bufio"
@@ -22,7 +22,7 @@ type benchmarkCase struct {
 
 func loadCases(t *testing.T) []benchmarkCase {
 	t.Helper()
-	path := filepath.Join("..", "..", "testdata", "benchmark_cases.jsonl")
+	path := filepath.Join("..", "testdata", "benchmark_cases.jsonl")
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open benchmark_cases.jsonl: %v", err)
@@ -72,7 +72,7 @@ func TestBenchmarkCases(t *testing.T) {
 
 // BenchmarkRedact measures pipeline throughput across all cases.
 func BenchmarkRedact(b *testing.B) {
-	path := filepath.Join("..", "..", "testdata", "benchmark_cases.jsonl")
+	path := filepath.Join("..", "testdata", "benchmark_cases.jsonl")
 	f, err := os.Open(path)
 	if err != nil {
 		b.Fatalf("open: %v", err)
