@@ -32,6 +32,14 @@ var ipv6Pattern string = strings.Join([]string{
 
 var Patterns = []Pattern{
 	{Type: "EMAIL", Priority: 10, Regex: regexp.MustCompile(`\b[\w.+-]+@[\w-]+\.[\w.-]+\b`)},
+	{Type: "PHONE", Priority: 10, Regex: regexp.MustCompile(
+		// +<cc> followed by 7-15 digits (no parens): +44 20 7946 0958
+		`\+\d(?:[\s.\-]?\d){6,14}\b` +
+			// +<cc> with parenthesised area code: +1 (415) 555-0198
+			`|\+\d[\s.\-]?\(\d{3}\)[\s.\-]?\d{3}[\s.\-]\d{4}\b` +
+			// Bare parenthesised (US/CA): (415) 555-0198
+			`|\(\d{3}\)[\s.\-]?\d{3}[\s.\-]\d{4}\b`,
+	), Validate: IsPhoneNumber},
 	{Type: "IPv4", Priority: 20, Regex: regexp.MustCompile(`\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b`)},
 	{Type: "IPv6", Priority: 20, Regex: regexp.MustCompile("(?i)(?:" + ipv6Pattern + ")")},
 	{Type: "SSN", Priority: 20, Regex: regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`)},

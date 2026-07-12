@@ -1,5 +1,11 @@
 package regex
 
+import (
+	"strings"
+
+	"github.com/nyaruka/phonenumbers"
+)
+
 // LuhnCheck implements the Luhn algorithm to validate credit card numbers.
 func LuhnCheck(number string) bool {
 	var sum int
@@ -27,4 +33,24 @@ func LuhnCheck(number string) bool {
 	}
 
 	return sum%10 == 0 && idx >= 13
+}
+
+// IsPhoneNumber validates a candidate phone number string using Google's
+// libphonenumber. The candidate comes from one of two regexes:
+//   - +<country code> <number> (auto-detects region from prefix)
+//   - (XXX) XXX-XXXX (treated as US/CA)
+func IsPhoneNumber(s string) bool {
+	if strings.HasPrefix(s, "+") {
+		num, err := phonenumbers.Parse(s, "")
+		if err != nil {
+			return false
+		}
+		return phonenumbers.IsPossibleNumber(num)
+	}
+	// Parenthesised format — treat as US/CA.
+	num, err := phonenumbers.Parse(s, "US")
+	if err != nil {
+		return false
+	}
+	return phonenumbers.IsPossibleNumber(num)
 }
