@@ -1,0 +1,239 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  MODEL_VERSION: "gliner-pii-edge-v1.0"
+  GO_VERSION: "1.25"
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    outputs:
+      model_onnx_sha256: ${{ steps.checksums.outputs.model_onnx }}
+      tokenizer_sha256: ${{ steps.checksums.outputs.tokenizer }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Export model to ONNX
+        run: |
+          python scripts/export_model.py \
+            --model "knowledgator/${{ env.MODEL_VERSION }}" \
+            --out ./model-export/
+
+      - name: Benchmark against test cases
+        run: |
+          python scripts/benchmark_model.py \
+            --model-dir ./model-export/ \
+            --cases testdata/benchmark_cases.jsonl
+
+      - name: Generate checksums
+        id: checksums
+        run: |
+          MODEL_SHA=$(sha256sum ./model-export/model.onnx | cut -d' ' -f1)
+          TOK_SHA=$(sha256sum ./model-export/tokenizer.json | cut -d' ' -f1)
+          CONFIG_SHA=$(sha256sum ./model-export/gliner_config.json | cut -d' ' -f1)
+          echo "model_onnx=$MODEL_SHA" >> "$GITHUB_OUTPUT"
+          echo "tokenizer=$TOK_SHA" >> "$GITHUB_OUTPUT"
+          echo "config=$CONFIG_SHA" >> "$GITHUB_OUTPUT"
+          echo "model_onnx=$MODEL_SHA"
+          echo "tokenizer=$TOK_SHA"
+          echo "config=$CONFIG_SHA"
+
+      - name: Rename artifacts for release
+        run: |
+          cp ./model-export/model.onnx "./${{ env.MODEL_VERSION }}.onnx"
+          cp ./model-export/tokenizer.json "./${{ env.MODEL_VERSION }}.tokenizer.json"
+          cp ./model-export/gliner_config.json "./${{ env.MODEL_VERSION }}.config.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model-artifacts
+          path: |
+            ${{ env.MODEL_VERSION }}.onnx
+            ${{ env.MODEL_VERSION }}.tokenizer.json
+            ${{ env.MODEL_VERSION }}.config.json
+          if-no-files-found: error
+
+  nerd-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (arm64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        working-directory: nerd
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          BIN="nerd/target/${{ matrix.target }}/release/cloak-nerd"
+          # Strip + set OS/ARCH in filename (GOOS/GOARCH naming — matches
+          # what `cloak init` requests, e.g. cloak-nerd-linux-amd64).
+          strip "$BIN" || true
+          OS=$(echo ${{ matrix.target }} | cut -d- -f3)
+          RUST_ARCH=$(echo ${{ matrix.target }} | cut -d- -f1)
+          case "$RUST_ARCH" in
+            x86_64) ARCH=amd64 ;;
+            aarch64) ARCH=arm64 ;;
+            *) ARCH="$RUST_ARCH" ;;
+          esac
+          mv "$BIN" "./cloak-nerd-${OS}-${ARCH}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nerd-${{ matrix.target }}
+          path: cloak-nerd-*
+          if-no-files-found: error
+
+  nerd-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        working-directory: nerd
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          BIN="nerd/target/${{ matrix.target }}/release/cloak-nerd"
+          strip "$BIN" || true
+          OS=$(echo ${{ matrix.target }} | cut -d- -f3)
+          RUST_ARCH=$(echo ${{ matrix.target }} | cut -d- -f1)
+          case "$RUST_ARCH" in
+            x86_64) ARCH=amd64 ;;
+            aarch64) ARCH=arm64 ;;
+            *) ARCH="$RUST_ARCH" ;;
+          esac
+          mv "$BIN" "./cloak-nerd-${OS}-${ARCH}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nerd-${{ matrix.target }}
+          path: cloak-nerd-*
+          if-no-files-found: error
+
+  cloak:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          go build -ldflags="-s -w" -o "cloak-${{ matrix.goos }}-${{ matrix.goarch }}" ./cmd/cloak/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloak-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: cloak-*
+          if-no-files-found: error
+
+  release:
+    needs: [model, nerd-linux, nerd-macos, cloak]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Download all artifacts into a flat directory.
+      - uses: actions/download-artifact@v4
+        with:
+          path: ./release-assets/
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh ./release-assets/
+
+      - name: Generate SHA256 checksums
+        working-directory: ./release-assets/
+        run: |
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ github.ref_name }}"
+          body: |
+            ## cloak ${{ github.ref_name }}
+
+            ### Assets
+
+            | File | Description |
+            |---|---|
+            | `cloak-{linux,darwin}-{amd64,arm64}` | CLI binary (pure Go, no deps) |
+            | `cloak-nerd-{linux,darwin}-{amd64,arm64}` | NER inference sidecar (Rust) |
+            | `${{ env.MODEL_VERSION }}.onnx` | GLiNER PII model (FP32 ONNX) |
+            | `${{ env.MODEL_VERSION }}.tokenizer.json` | Fast tokenizer (incl. `<<ENT>>`/`<<SEP>>` prompt tokens) |
+            | `${{ env.MODEL_VERSION }}.config.json` | GLiNER config (max_width, prompt tokens) — required by cloak-nerd |
+            | `checksums.txt` | SHA256 checksums for all files |
+
+            ### Quick start
+
+            ```bash
+            # 1. Download the CLI
+            curl -sSL "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/cloak-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" -o cloak
+            chmod +x cloak
+
+            # 2. Install NER support (optional, ~150 MB)
+            ./cloak init
+
+            # 3. Redact
+            ./cloak redact -t "Call John at +1 555-0198"
+            # With named-entity detection:
+            ./cloak redact --thorough file.log
+            ```
+          files: ./release-assets/*
+          fail_on_unmatched_files: true

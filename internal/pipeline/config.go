@@ -15,6 +15,11 @@ func defaultConfig() *Config {
 			"JWT": true, "PRIVATE_KEY": true, "TOKEN": true,
 			"API_KEY": true, "CREDENTIALS": true,
 
+			// NER-stage entity types — produced when cloak-nerd is installed
+			// and --thorough is set. No-op otherwise.
+			"NAME": true, "USERNAME": true, "ADDRESS": true,
+			"HOSTNAME": true, "ORGANIZATION": true,
+
 			// Secrets-stage vendor rules — keep in sync with secrets.Rules().
 			"GITHUB_PAT": true, "GITHUB_FINE_GRAINED_PAT": true, "GITHUB_OAUTH": true,
 			"GITHUB_APP_TOKEN": true, "GITHUB_REFRESH_TOKEN": true, "GITLAB_TOKEN": true,

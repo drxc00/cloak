@@ -1,0 +1,7 @@
+# GLiNER model export — used at release-time only, never at runtime.
+# Freeze exact versions so CI produces reproducible artifacts.
+gliner>=0.2.10
+transformers>=4.48.0,<5.0
+torch>=2.0.0
+onnx>=1.16.0
+onnxruntime>=1.18.0

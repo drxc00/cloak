@@ -1,0 +1,27 @@
+[package]
+name = "cloak-nerd"
+version = "0.1.0"
+edition = "2021"
+description = "GLiNER PII inference sidecar for Cloak"
+license = "Apache-2.0"
+
+[[bin]]
+name = "cloak-nerd"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+# JSON
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# ONNX Runtime
+ort = "2.0.0-rc.12"
+# Array types for ONNX tensors
+ndarray = "0.17"
+# Tokenizer — HuggingFace tokenizers in Rust
+tokenizers = "0.21"
+# Word-level pre-tokenization (must match GLiNER's WhitespaceTokenSplitter)
+regex = "1"
+# Error handling
+anyhow = "1"

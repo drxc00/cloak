@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,7 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/drxc00/cloak/internal/redact"
+	"github.com/drxc00/cloak/internal/pipeline"
+	"github.com/drxc00/cloak/internal/stages/ner"
+	"github.com/drxc00/cloak/internal/stages/regex"
+	"github.com/drxc00/cloak/internal/stages/secrets"
 )
 
 type benchmarkCase struct {
@@ -48,15 +52,29 @@ func loadCases(t *testing.T) []benchmarkCase {
 	return cases
 }
 
+func redactString(input string) string {
+	config := pipeline.NewConfig()
+	p := pipeline.New(
+		config,
+		regex.NewStage(),
+		secrets.NewStage(),
+		ner.NewStage(),
+	)
+	result, err := p.Run(context.Background(), pipeline.FromString(input))
+	if err != nil {
+		return input
+	}
+	return result.Redacted
+}
+
 func TestBenchmarkCases(t *testing.T) {
 	cases := loadCases(t)
-	p := redact.NewPipeline()
 
 	pass, fail := 0, 0
 	for _, tc := range cases {
 		tc := tc
 		t.Run(fmt.Sprintf("%02d_%s", tc.ID, tc.Category), func(t *testing.T) {
-			got := p.Redact(tc.Input)
+			got := redactString(tc.Input)
 			if got == tc.ExpectedOutput {
 				pass++
 				return
@@ -93,11 +111,9 @@ func BenchmarkRedact(b *testing.B) {
 		cases = append(cases, c)
 	}
 
-	p := redact.NewPipeline()
-
 	for b.Loop() {
 		for _, tc := range cases {
-			p.Redact(tc.Input)
+			redactString(tc.Input)
 		}
 	}
 }

@@ -1,2 +1,5 @@
 bin
 .env.*
+nerd/target/
+__pycache__
+model-export
