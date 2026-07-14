@@ -3,3 +3,9 @@ bin
 nerd/target/
 __pycache__
 model-export
+augmented/
+trained/
+data/
+.plan
+trained-*/
+scripts/training/datasets/*

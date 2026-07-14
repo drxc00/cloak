@@ -16,7 +16,7 @@ Teams paste production logs, customer tickets, and config files into LLMs every 
 ## Features
 
 - **Fast by default** — structured formats (IPs, SSNs, credit cards, JWTs, private keys) are caught with regex in microseconds; API keys and tokens (GitHub, AWS, OpenAI, Anthropic, Slack, Stripe, and 30+ other vendor formats) are caught via prefix + Shannon-entropy scoring
-- **Context-aware (opt-in)** — a small local GLiNER model, run out-of-process via a Rust sidecar, catches names, addresses, usernames, and organizations that regex can't — no GPU or Python runtime needed at redact-time
+- **Context-aware (opt-in)** — a small local token-classification model, run out-of-process via a Rust sidecar, catches names, addresses, and usernames that regex can't — no GPU or Python runtime needed at redact-time
 - **Structure-preserving** — redacts values in place without reformatting or breaking surrounding syntax
 - **Configurable** — disable specific redaction types per run, or preview matches without touching the file
 
@@ -40,7 +40,7 @@ Prebuilt binaries for Linux/macOS (amd64/arm64) are published on [Releases](http
 
 ### Enabling NER (`--thorough`)
 
-Regex + secret-scanning work out of the box. Detecting names/addresses/usernames additionally requires the `cloak-nerd` sidecar and its model, which `cloak init` downloads (~150–300 MB) into `~/.cache/cloak/`:
+Regex + secret-scanning work out of the box. Detecting names/addresses/usernames additionally requires the `cloak-nerd` sidecar and its model, which `cloak init` downloads (~80–150 MB) into `~/.cache/cloak/`:
 
 ```bash
 cloak init
@@ -48,8 +48,8 @@ cloak init
 
 This fetches, per your OS/arch:
 - `cloak-nerd` — the Rust ONNX Runtime sidecar binary
-- `model.onnx` — the GLiNER PII model (FP32; UINT8 quantization measurably hurt detection quality, so it's off by default)
-- `tokenizer.json`, `gliner_config.json` — its tokenizer and prompt config
+- `model.onnx` — the PII token-classification model (INT8 or FP32)
+- `tokenizer.json`, `model_config.json` — its tokenizer and model config
 
 Re-run `cloak init` any time to re-download and replace these files.
 
@@ -70,7 +70,7 @@ tail -f app.log | cloak redact
 cloak redact --text "My name is Neil, call me at 555-0123"
 ```
 
-**Enable NER (names, addresses, usernames, organizations):**
+**Enable NER (names, addresses, usernames):**
 ```bash
 cloak redact --thorough input.log
 ```
@@ -86,7 +86,7 @@ Cloak runs detection as a staged pipeline. Each stage only looks at text the pre
 
 1. **Regex matcher** — emails, phone numbers, IPv4/IPv6, MAC addresses, SSNs, credit cards, JWTs, PEM key blocks
 2. **Secret scanner** — vendor API keys/tokens by known prefix, plus generic high-entropy credential detection
-3. **NER model** *(opt-in via `--thorough`, requires `cloak init`)* — names, addresses, usernames, hostnames, organizations, via a local GLiNER model run through the `cloak-nerd` sidecar
+3. **NER model** *(opt-in via `--thorough`, requires `cloak init`)* — names, addresses, usernames via a local token-classification model run through the `cloak-nerd` sidecar
 
 > `--dry-run` is accepted as a flag but not yet wired up — it currently has no effect and redaction always applies. Tracked as a known gap.
 
@@ -96,7 +96,7 @@ Cloak runs detection as a staged pipeline. Each stage only looks at text the pre
 
 **Secrets & credentials (always on):** `JWT` · `PRIVATE_KEY` · `TOKEN` · `API_KEY` · `CREDENTIALS` · `GENERIC_API_KEY` · `DB_CREDENTIALS`, plus 30+ vendor-specific patterns (GitHub, GitLab, AWS, OpenAI, Anthropic, OpenRouter, DeepSeek, Groq, Hugging Face, Perplexity, npm, PyPI, Docker Hub, Slack, SendGrid, Twilio, Notion, Stripe, Heroku, Grafana, Atlassian, Doppler, Replicate, Datadog, Mailgun, Vault, Linear, age — full list in `internal/pipeline/config.go`)
 
-**NER, opt-in via `--thorough`:** `NAME` · `USERNAME` · `ADDRESS` · `HOSTNAME` · `ORGANIZATION`
+**NER, opt-in via `--thorough`:** `NAME` · `USERNAME` · `ADDRESS`
 
 Any type can be turned off per run with `--disable TYPE1,TYPE2`.
 
@@ -111,7 +111,7 @@ cloak/
 │       ├── regex/              # Structured PII patterns
 │       ├── secrets/             # Vendor API key + entropy-based detection
 │       └── ner/                 # Shells out to the cloak-nerd sidecar
-├── nerd/                       # cloak-nerd: Rust GLiNER ONNX inference sidecar
+├── nerd/                       # cloak-nerd: Rust token-classification ONNX inference sidecar
 ├── scripts/                    # Python model export/benchmark (build-time only)
 ├── testdata/                   # Benchmark cases + integration fixtures
 ├── integration/                # End-to-end pipeline tests
@@ -130,11 +130,13 @@ make vet                     # go vet
 make fmt                      # go fmt
 ```
 
-To exercise the full NER path locally (requires Python for model export):
+To exercise the full NER path locally (requires Python for training + export):
 
 ```bash
-make model-export     # exports knowledgator/gliner-pii-edge-v1.0 to ./model-export/
-make model-benchmark    # scores the exported model against testdata/benchmark_cases.jsonl
+make model-train      # trains a distilbert classifier on ai4privacy → ./trained/
+make model-export     # exports to INT8 ONNX → ./model-export/
+make model-parity     # verifies PyTorch ↔ ONNX agreement
+make model-benchmark    # scores the sidecar against testdata/benchmark_cases.jsonl
 make init-dev             # copies bin/cloak-nerd + model-export/* into ~/.cache/cloak/
 ```
 
@@ -142,7 +144,7 @@ make init-dev             # copies bin/cloak-nerd + model-export/* into ~/.cache
 
 ## Releasing
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds `cloak` (Go, linux/darwin × amd64/arm64), `cloak-nerd` (Rust, same matrix), exports the GLiNER model (FP32), benchmarks it as a release gate, and publishes everything plus a `checksums.txt` to GitHub Releases.
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds `cloak` (Go, linux/darwin × amd64/arm64), `cloak-nerd` (Rust, same matrix), trains + exports the PII token classifier, benchmarks it as a release gate, and publishes everything plus a `checksums.txt` to GitHub Releases.
 
 ## Benchmarking
 

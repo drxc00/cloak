@@ -9,64 +9,8 @@ permissions:
   contents: write
 
 env:
-  MODEL_VERSION: "gliner-pii-edge-v1.0"
   GO_VERSION: "1.25"
 jobs:
-  model:
-    runs-on: ubuntu-latest
-    outputs:
-      model_onnx_sha256: ${{ steps.checksums.outputs.model_onnx }}
-      tokenizer_sha256: ${{ steps.checksums.outputs.tokenizer }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r scripts/requirements.txt
-
-      - name: Export model to ONNX
-        run: |
-          python scripts/export_model.py \
-            --model "knowledgator/${{ env.MODEL_VERSION }}" \
-            --out ./model-export/
-
-      - name: Benchmark against test cases
-        run: |
-          python scripts/benchmark_model.py \
-            --model-dir ./model-export/ \
-            --cases testdata/benchmark_cases.jsonl
-
-      - name: Generate checksums
-        id: checksums
-        run: |
-          MODEL_SHA=$(sha256sum ./model-export/model.onnx | cut -d' ' -f1)
-          TOK_SHA=$(sha256sum ./model-export/tokenizer.json | cut -d' ' -f1)
-          CONFIG_SHA=$(sha256sum ./model-export/gliner_config.json | cut -d' ' -f1)
-          echo "model_onnx=$MODEL_SHA" >> "$GITHUB_OUTPUT"
-          echo "tokenizer=$TOK_SHA" >> "$GITHUB_OUTPUT"
-          echo "config=$CONFIG_SHA" >> "$GITHUB_OUTPUT"
-          echo "model_onnx=$MODEL_SHA"
-          echo "tokenizer=$TOK_SHA"
-          echo "config=$CONFIG_SHA"
-
-      - name: Rename artifacts for release
-        run: |
-          cp ./model-export/model.onnx "./${{ env.MODEL_VERSION }}.onnx"
-          cp ./model-export/tokenizer.json "./${{ env.MODEL_VERSION }}.tokenizer.json"
-          cp ./model-export/gliner_config.json "./${{ env.MODEL_VERSION }}.config.json"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: model-artifacts
-          path: |
-            ${{ env.MODEL_VERSION }}.onnx
-            ${{ env.MODEL_VERSION }}.tokenizer.json
-            ${{ env.MODEL_VERSION }}.config.json
-          if-no-files-found: error
-
   nerd-linux:
     runs-on: ubuntu-latest
     strategy:
@@ -182,7 +126,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [model, nerd-linux, nerd-macos, cloak]
+    needs: [nerd-linux, nerd-macos, cloak]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -215,10 +159,16 @@ jobs:
             |---|---|
             | `cloak-{linux,darwin}-{amd64,arm64}` | CLI binary (pure Go, no deps) |
             | `cloak-nerd-{linux,darwin}-{amd64,arm64}` | NER inference sidecar (Rust) |
-            | `${{ env.MODEL_VERSION }}.onnx` | GLiNER PII model (FP32 ONNX) |
-            | `${{ env.MODEL_VERSION }}.tokenizer.json` | Fast tokenizer (incl. `<<ENT>>`/`<<SEP>>` prompt tokens) |
-            | `${{ env.MODEL_VERSION }}.config.json` | GLiNER config (max_width, prompt tokens) — required by cloak-nerd |
             | `checksums.txt` | SHA256 checksums for all files |
+
+            ### Model
+
+            The NER model is hosted on Hugging Face Hub ([drxc0/cloak-ner-v1](https://huggingface.co/drxc0/cloak-ner-v1)).
+            `cloak init` downloads it automatically — no manual download needed.
+
+            Two variants available:
+            - `--model edge` (default) — distilbert, INT8 quantized, ~50 MB
+            - `--model full` — deberta-v3-base, FP32, ~450 MB
 
             ### Quick start
 
@@ -227,8 +177,9 @@ jobs:
             curl -sSL "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/cloak-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" -o cloak
             chmod +x cloak
 
-            # 2. Install NER support (optional, ~150 MB)
-            ./cloak init
+            # 2. Install NER support (optional — model downloads from Hugging Face)
+            ./cloak init              # edge variant (default, ~50 MB)
+            ./cloak init --model full # full variant (~450 MB, more accurate)
 
             # 3. Redact
             ./cloak redact -t "Call John at +1 555-0198"
