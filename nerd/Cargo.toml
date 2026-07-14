@@ -2,7 +2,7 @@
 name = "cloak-nerd"
 version = "0.1.0"
 edition = "2021"
-description = "GLiNER PII inference sidecar for Cloak"
+description = "Token-classification PII inference sidecar for Cloak"
 license = "Apache-2.0"
 
 [[bin]]
