@@ -11,3 +11,5 @@ onnxruntime>=1.18.0
 onnxscript>=0.1
 # Domain augmentation (optional, recommended)
 faker>=30.0.0
+# Few-NERD parquet reading
+pyarrow>=14.0.0
