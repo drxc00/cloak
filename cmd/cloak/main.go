@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -18,14 +17,19 @@ import (
 	"github.com/drxc00/cloak/internal/stages/secrets"
 )
 
-// Base URL for downloading model artifacts. Override with CLOAK_RELEASE_URL.
+// Base URL for downloading sidecar binary artifacts. Override with CLOAK_RELEASE_URL.
 const defaultReleaseURL = "https://github.com/drxc00/cloak/releases/latest/download"
 
+// Base Hugging Face repo for downloading model artifacts.
+// Override with CLOAK_HF_REPO (format: "<org>/<repo>").
+const defaultHFRepo = "drxc0/cloak-ner-v1"
+
 var (
-	dryRun   bool
-	thorough bool
-	disabled []string
-	text     string
+	dryRun       bool
+	thorough     bool
+	disabled     []string
+	text         string
+	modelVariant string
 )
 
 var rootCmd = &cobra.Command{
@@ -97,9 +101,12 @@ via stdin.`,
 
 func init() {
 	redactCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Detect but do not redact")
-	redactCmd.Flags().BoolVar(&thorough, "thorough", false, "Enable NER stage (names, addresses via GLiNER)")
+	redactCmd.Flags().BoolVar(&thorough, "thorough", false, "Enable NER stage (names, addresses, usernames)")
 	redactCmd.Flags().StringSliceVar(&disabled, "disable", nil, "Disable specific detector types")
 	redactCmd.Flags().StringVarP(&text, "text", "t", "", "Redact inline text instead of a file")
+
+	initCmd.Flags().StringVar(&modelVariant, "model", "edge", "Model variant to install: edge or full")
+
 	rootCmd.AddCommand(redactCmd)
 	rootCmd.AddCommand(initCmd)
 }
@@ -111,12 +118,17 @@ func init() {
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Download the NER model and inference engine",
-	Long: `Downloads the GLiNER PII model (ONNX) and the cloak-nerd inference
-engine into ~/.cache/cloak/. After init, the --thorough flag on
-'cloak redact' enables named-entity detection (names, addresses,
-organisations, usernames, hostnames).
+	Long: `Downloads the PII token-classification model (ONNX) and the cloak-nerd
+inference engine into ~/.cache/cloak/. After init, the --thorough flag on
+'cloak redact' enables named-entity detection (names, addresses, usernames).
 
-Requires an internet connection. The download is ~150-300 MB.
+Requires an internet connection.
+
+Two model variants are available:
+  --model edge  (default)  Small distilbert, INT8 quantized — ~50 MB download.
+  --model full             Larger deberta-v3, full precision — more accurate,
+                           bigger download (~450 MB).
+
 Run again to re-download and replace existing files.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cacheDir, err := userCacheDir()
@@ -133,62 +145,59 @@ Run again to re-download and replace existing files.`,
 			}
 		}
 
+		// Validate --model.
+		switch modelVariant {
+		case "edge", "full":
+		default:
+			return fmt.Errorf("unknown model variant %q — must be 'edge' or 'full'", modelVariant)
+		}
+
+		// Model files come from Hugging Face Hub.
+		hfRepo := os.Getenv("CLOAK_HF_REPO")
+		if hfRepo == "" {
+			hfRepo = defaultHFRepo
+		}
+
+		modelFiles := []string{"model.onnx", "tokenizer.json", "model_config.json"}
+		for _, fn := range modelFiles {
+			url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s/%s", hfRepo, modelVariant, fn)
+			dest := filepath.Join(modelDir, fn)
+
+			fmt.Printf("⟳  Downloading %s/%s …\n", modelVariant, fn)
+			if err := downloadFile(url, dest); err != nil {
+				return fmt.Errorf("download %s/%s: %w", modelVariant, fn, err)
+			}
+			fmt.Printf("   ✓  %s\n", fn)
+		}
+
+		// Sidecar binary still comes from GitHub Releases.
 		releaseURL := os.Getenv("CLOAK_RELEASE_URL")
 		if releaseURL == "" {
 			releaseURL = defaultReleaseURL
 		}
 
-		files := []struct {
-			name string
-			dir  string
-		}{
-			{name: "gliner-pii-edge-v1.0.onnx", dir: modelDir},
-			{name: "gliner-pii-edge-v1.0.tokenizer.json", dir: modelDir},
-			{name: "gliner-pii-edge-v1.0.config.json", dir: modelDir},
-			{
-				name: fmt.Sprintf("cloak-nerd-%s-%s", runtime.GOOS, runtime.GOARCH),
-				dir:  binDir,
-			},
+		nerdName := fmt.Sprintf("cloak-nerd-%s-%s", runtime.GOOS, runtime.GOARCH)
+		nerdURL := fmt.Sprintf("%s/%s", releaseURL, nerdName)
+		nerdDest := filepath.Join(binDir, nerdName)
+		nerdCanon := filepath.Join(binDir, "cloak-nerd")
+
+		fmt.Printf("⟳  Downloading %s …\n", nerdName)
+		if err := downloadFile(nerdURL, nerdDest); err != nil {
+			return fmt.Errorf("download %s: %w", nerdName, err)
 		}
 
-		for _, f := range files {
-			url := fmt.Sprintf("%s/%s", releaseURL, f.name)
-			dest := filepath.Join(f.dir, f.name)
+		os.Remove(nerdCanon)
+		if err := os.Rename(nerdDest, nerdCanon); err != nil {
+			return fmt.Errorf("rename: %w", err)
+		}
+		if err := os.Chmod(nerdCanon, 0755); err != nil {
+			return fmt.Errorf("chmod: %w", err)
+		}
+		fmt.Printf("   ✓  cloak-nerd\n")
 
-			// Canonical names for model files.
-			var canonDest string
-			switch {
-			case strings.HasSuffix(f.name, ".onnx"):
-				canonDest = filepath.Join(f.dir, "model.onnx")
-			case strings.HasSuffix(f.name, ".tokenizer.json"):
-				canonDest = filepath.Join(f.dir, "tokenizer.json")
-			case strings.HasSuffix(f.name, ".config.json"):
-				canonDest = filepath.Join(f.dir, "gliner_config.json")
-			default:
-				canonDest = filepath.Join(f.dir, "cloak-nerd")
-			}
-
-			fmt.Printf("⟳  Downloading %s …\n", f.name)
-			if err := downloadFile(url, dest); err != nil {
-				return fmt.Errorf("download %s: %w", f.name, err)
-			}
-
-			// Rename to canonical name.
-			if dest != canonDest {
-				os.Remove(canonDest)
-				if err := os.Rename(dest, canonDest); err != nil {
-					return fmt.Errorf("rename: %w", err)
-				}
-			}
-
-			// Make binary executable.
-			if filepath.Base(canonDest) == "cloak-nerd" {
-				if err := os.Chmod(canonDest, 0755); err != nil {
-					return fmt.Errorf("chmod: %w", err)
-				}
-			}
-
-			fmt.Printf("   ✓  %s\n", filepath.Base(canonDest))
+		// Write variant marker.
+		if err := os.WriteFile(filepath.Join(modelDir, "variant.txt"), []byte(modelVariant), 0644); err != nil {
+			return fmt.Errorf("write variant marker: %w", err)
 		}
 
 		fmt.Println()

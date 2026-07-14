@@ -44,6 +44,7 @@ var Patterns = []Pattern{
 	{Type: "IPv6", Priority: 20, Regex: regexp.MustCompile("(?i)(?:" + ipv6Pattern + ")")},
 	{Type: "SSN", Priority: 20, Regex: regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`)},
 	{Type: "MAC_ADDRESS", Priority: 20, Regex: regexp.MustCompile(`\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b`)},
+	{Type: "IBAN", Priority: 20, Regex: regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b`), Validate: IsValidIBAN},
 	{Type: "CREDIT_CARD", Priority: 15, Regex: regexp.MustCompile(`\b\d(?:[ -]?\d){12,18}\b`), Validate: LuhnCheck},
 	{Type: "JWT", Priority: 5, Regex: regexp.MustCompile(`\beyJ[\w-]+\.[\w-]+\.[\w-]+\b`)},
 	{Type: "PRIVATE_KEY", Priority: 1, Regex: regexp.MustCompile(`(?s)-----BEGIN [A-Z ]+-----.*?-----END [A-Z ]+-----`)},

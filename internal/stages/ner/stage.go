@@ -9,12 +9,24 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/drxc00/cloak/internal/pipeline"
 )
+
+// The token-classification model tags address components (street, city,
+// state/postcode) as separate spans because it decodes per-token, not per
+// entity. connectorRe matches the short "glue" between two such spans
+// (", ", ", IL ", ", CA ") — a comma and/or a bare 1-3 char code — so they
+// can be merged into the single contiguous ADDRESS the benchmark expects.
+var connectorRe = regexp.MustCompile(`^,?\s*[A-Z0-9]{0,6}\s*,?\s*$`)
+
+// houseNumberRe matches a bare street number ("742", "221B") immediately
+// before a merged ADDRESS span, which the model doesn't tag on its own.
+var houseNumberRe = regexp.MustCompile(`(?:^|\s)(\d{1,6}[A-Za-z]?)\s*$`)
 
 // ---------------------------------------------------------------------------
 // Sidecar protocol types
@@ -40,12 +52,12 @@ type entity struct {
 // Stage
 // ---------------------------------------------------------------------------
 
-// Stage detects named entities (names, addresses, organisations) via the
-// cloak-nerd sidecar binary, which runs GLiNER ONNX inference. cloak-nerd
-// loads the model once and serves NDJSON requests over stdin/stdout for
-// its whole lifetime, so Stage keeps one subprocess running for as long
-// as the Stage itself is used, rather than spawning (and reloading the
-// model) per request.
+// Stage detects named entities (names, addresses, usernames) via the
+// cloak-nerd sidecar binary, which runs a supervised token-classification
+// ONNX model. cloak-nerd loads the model once and serves NDJSON requests
+// over stdin/stdout for its whole lifetime, so Stage keeps one subprocess
+// running for as long as the Stage itself is used, rather than spawning
+// (and reloading the model) per request.
 type Stage struct {
 	binPath       string
 	modelPath     string
@@ -71,7 +83,7 @@ func NewStage() *Stage {
 
 	modelPath := filepath.Join(cacheDir, "models", "model.onnx")
 	tokPath := filepath.Join(cacheDir, "models", "tokenizer.json")
-	configPath := filepath.Join(cacheDir, "models", "gliner_config.json")
+	configPath := filepath.Join(cacheDir, "models", "model_config.json")
 
 	return &Stage{
 		binPath:       binPath,
@@ -131,8 +143,9 @@ func (s *Stage) Detect(_ context.Context, text string, claimed []pipeline.Match)
 		return nil
 	}
 
-	// Build labels from configured types — for now hard-code the NER types.
-	labels := []string{"NAME", "USERNAME", "ADDRESS", "HOSTNAME", "ORGANIZATION"}
+	// Core-3 label set — the classifier only knows NAME, ADDRESS, USERNAME.
+	// These are passed as an allow-list filter to the sidecar.
+	labels := []string{"NAME", "ADDRESS", "USERNAME"}
 
 	var matches []pipeline.Match
 
@@ -153,7 +166,41 @@ func (s *Stage) Detect(_ context.Context, text string, claimed []pipeline.Match)
 	}
 
 	sort.Slice(matches, func(i, j int) bool { return matches[i].Start < matches[j].Start })
-	return matches
+	return mergeAdjacentSpans(text, matches)
+}
+
+// mergeAdjacentSpans collapses consecutive same-type matches that the model
+// split at token boundaries (see connectorRe/houseNumberRe above) back into
+// the single entity a human would redact as one unit.
+func mergeAdjacentSpans(text string, matches []pipeline.Match) []pipeline.Match {
+	if len(matches) == 0 {
+		return matches
+	}
+
+	merged := make([]pipeline.Match, 0, len(matches))
+	cur := matches[0]
+	for _, next := range matches[1:] {
+		if next.Type == cur.Type && connectorRe.MatchString(text[cur.End:next.Start]) {
+			cur.End = next.End
+			cur.Text = text[cur.Start:cur.End]
+			continue
+		}
+		merged = append(merged, cur)
+		cur = next
+	}
+	merged = append(merged, cur)
+
+	for i := range merged {
+		if merged[i].Type != "ADDRESS" {
+			continue
+		}
+		if loc := houseNumberRe.FindStringSubmatchIndex(text[:merged[i].Start]); loc != nil {
+			merged[i].Start = loc[2]
+			merged[i].Text = text[merged[i].Start:merged[i].End]
+		}
+	}
+
+	return merged
 }
 
 // start launches the long-lived cloak-nerd subprocess and wires up its
@@ -163,7 +210,7 @@ func (s *Stage) start() error {
 		"--model", s.modelPath,
 		"--tokenizer", s.tokenizerPath,
 		"--config", s.configPath,
-		"--threshold", "0.3",
+		"--threshold", "0.5",
 	)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

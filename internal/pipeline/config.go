@@ -11,13 +11,13 @@ func defaultConfig() *Config {
 	return &Config{
 		EnabledTypes: map[string]bool{
 			"EMAIL": true, "PHONE": true, "MAC_ADDRESS": true,
-			"IPv4": true, "IPv6": true, "SSN": true, "CREDIT_CARD": true,
+			"IPv4": true, "IPv6": true, "SSN": true, "CREDIT_CARD": true, "IBAN": true,
 			"JWT": true, "PRIVATE_KEY": true, "TOKEN": true,
 			"API_KEY": true, "CREDENTIALS": true,
 
 			// NER-stage entity types — produced when cloak-nerd is installed
-			// and --thorough is set. No-op otherwise.
 			"NAME": true, "USERNAME": true, "ADDRESS": true,
+			// NOTE: HOSTNAME and ORGANIZATION are retired
 			"HOSTNAME": true, "ORGANIZATION": true,
 
 			// Secrets-stage vendor rules — keep in sync with secrets.Rules().
@@ -33,7 +33,7 @@ func defaultConfig() *Config {
 			"HEROKU_API_KEY": true, "GRAFANA_SERVICE_ACCOUNT_TOKEN": true,
 			"ATLASSIAN_API_TOKEN": true, "DOPPLER_TOKEN": true, "DB_CREDENTIALS": true,
 			"REPLICATE_API_TOKEN": true,
-			"DATADOG_API_KEY": true, "MAILGUN_API_KEY": true,
+			"DATADOG_API_KEY":     true, "MAILGUN_API_KEY": true,
 			"VAULT_TOKEN": true, "LINEAR_API_KEY": true, "AGE_SECRET_KEY": true,
 			"GENERIC_API_KEY": true,
 		},

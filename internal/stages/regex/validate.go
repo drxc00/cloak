@@ -35,6 +35,35 @@ func LuhnCheck(number string) bool {
 	return sum%10 == 0 && idx >= 13
 }
 
+// IsValidIBAN checks the mod-97 checksum (ISO 7064 MOD 97-10) shared by all
+// IBANs, so we don't redact every bare "two letters + digits" token as an
+// account number.
+func IsValidIBAN(s string) bool {
+	if len(s) < 15 || len(s) > 34 {
+		return false
+	}
+
+	rearranged := s[4:] + s[:4]
+
+	feed := func(remainder, digit int) int { return (remainder*10 + digit) % 97 }
+
+	remainder := 0
+	for _, c := range rearranged {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			v := int(c-'A') + 10 // two-digit value: tens then units
+			remainder = feed(remainder, v/10)
+			remainder = feed(remainder, v%10)
+		case c >= '0' && c <= '9':
+			remainder = feed(remainder, int(c-'0'))
+		default:
+			return false
+		}
+	}
+
+	return remainder == 1
+}
+
 // IsPhoneNumber validates a candidate phone number string using Google's
 // libphonenumber. The candidate comes from one of two regexes:
 //   - +<country code> <number> (auto-detects region from prefix)
