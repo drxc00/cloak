@@ -62,14 +62,11 @@ jobs:
           if-no-files-found: error
 
   nerd-macos:
+    runs-on: macos-latest
     strategy:
       matrix:
-        include:
-          - target: x86_64-apple-darwin
-            runs-on: macos-13
-          - target: aarch64-apple-darwin
-            runs-on: macos-latest
-    runs-on: ${{ matrix.runs-on }}
+        target:
+          - aarch64-apple-darwin
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
