@@ -25,11 +25,10 @@ const defaultReleaseURL = "https://github.com/drxc00/cloak/releases/latest/downl
 const defaultHFRepo = "drxc0/cloak-ner-v1"
 
 var (
-	dryRun       bool
-	thorough     bool
-	disabled     []string
-	text         string
-	modelVariant string
+	dryRun   bool
+	fast     bool
+	disabled []string
+	text     string
 )
 
 var rootCmd = &cobra.Command{
@@ -47,6 +46,9 @@ var redactCmd = &cobra.Command{
 cards, API keys, names, etc.) and replaces each match with a
 [REDACTED - TYPE] marker.
 
+NER (names, addresses, usernames) runs by default when cloak-nerd is
+installed. Use --fast to skip it and run only regex + secret detection.
+
 Use --text for inline strings, pass a file path as argument, or pipe
 via stdin.`,
 	Args: cobra.MaximumNArgs(1),
@@ -58,10 +60,10 @@ via stdin.`,
 			opts = append(opts, pipeline.WithDisabled(disabled...))
 		}
 
-		// NER is opt-in via --thorough and requires cloak-nerd to be installed.
+		// NER runs by default when cloak-nerd is installed. --fast skips it.
 		stages := []pipeline.Stage{regex.NewStage(), secrets.NewStage()}
 		var nerStage *ner.Stage
-		if thorough && ner.Installed() {
+		if !fast && ner.Installed() {
 			opts = append(opts, pipeline.WithThorough(true))
 			nerStage = ner.NewStage()
 			stages = append(stages, nerStage)
@@ -101,11 +103,9 @@ via stdin.`,
 
 func init() {
 	redactCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Detect but do not redact")
-	redactCmd.Flags().BoolVar(&thorough, "thorough", false, "Enable NER stage (names, addresses, usernames)")
+	redactCmd.Flags().BoolVar(&fast, "fast", false, "Skip NER stage — regex and secret detection only")
 	redactCmd.Flags().StringSliceVar(&disabled, "disable", nil, "Disable specific detector types")
 	redactCmd.Flags().StringVarP(&text, "text", "t", "", "Redact inline text instead of a file")
-
-	initCmd.Flags().StringVar(&modelVariant, "model", "edge", "Model variant to install: edge or full")
 
 	rootCmd.AddCommand(redactCmd)
 	rootCmd.AddCommand(initCmd)
@@ -119,15 +119,11 @@ var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Download the NER model and inference engine",
 	Long: `Downloads the PII token-classification model (ONNX) and the cloak-nerd
-inference engine into ~/.cache/cloak/. After init, the --thorough flag on
-'cloak redact' enables named-entity detection (names, addresses, usernames).
+inference engine into ~/.cache/cloak/. NER (names, addresses, usernames) then
+runs automatically on every 'cloak redact' invocation.
 
-Requires an internet connection.
-
-Two model variants are available:
-  --model edge  (default)  Small distilbert, INT8 quantized — ~50 MB download.
-  --model full             Larger deberta-v3, full precision — more accurate,
-                           bigger download (~450 MB).
+Requires an internet connection. The model is a distilbert-based token
+classifier — ~130 MB download.
 
 Run again to re-download and replace existing files.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -145,13 +141,6 @@ Run again to re-download and replace existing files.`,
 			}
 		}
 
-		// Validate --model.
-		switch modelVariant {
-		case "edge", "full":
-		default:
-			return fmt.Errorf("unknown model variant %q — must be 'edge' or 'full'", modelVariant)
-		}
-
 		// Model files come from Hugging Face Hub.
 		hfRepo := os.Getenv("CLOAK_HF_REPO")
 		if hfRepo == "" {
@@ -160,12 +149,12 @@ Run again to re-download and replace existing files.`,
 
 		modelFiles := []string{"model.onnx", "tokenizer.json", "model_config.json"}
 		for _, fn := range modelFiles {
-			url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s/%s", hfRepo, modelVariant, fn)
+			url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", hfRepo, fn)
 			dest := filepath.Join(modelDir, fn)
 
-			fmt.Printf("⟳  Downloading %s/%s …\n", modelVariant, fn)
+			fmt.Printf("⟳  Downloading %s …\n", fn)
 			if err := downloadFile(url, dest); err != nil {
-				return fmt.Errorf("download %s/%s: %w", modelVariant, fn, err)
+				return fmt.Errorf("download %s: %w", fn, err)
 			}
 			fmt.Printf("   ✓  %s\n", fn)
 		}
@@ -195,13 +184,8 @@ Run again to re-download and replace existing files.`,
 		}
 		fmt.Printf("   ✓  cloak-nerd\n")
 
-		// Write variant marker.
-		if err := os.WriteFile(filepath.Join(modelDir, "variant.txt"), []byte(modelVariant), 0644); err != nil {
-			return fmt.Errorf("write variant marker: %w", err)
-		}
-
 		fmt.Println()
-		fmt.Println("NER stage is ready. Use --thorough with 'cloak redact' to enable.")
+		fmt.Println("NER stage is ready. Names, addresses, and usernames will be redacted automatically.")
 		fmt.Printf("Files installed in %s\n", cacheDir)
 		return nil
 	},

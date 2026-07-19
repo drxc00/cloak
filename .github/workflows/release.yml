@@ -19,10 +19,10 @@ jobs:
           - x86_64-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           targets: ${{ matrix.target }}
 
@@ -54,7 +54,7 @@ jobs:
           esac
           mv "$BIN" "./cloak-nerd-${OS}-${ARCH}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: nerd-${{ matrix.target }}
           path: cloak-nerd-*
@@ -68,10 +68,10 @@ jobs:
           - x86_64-apple-darwin
           - aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           targets: ${{ matrix.target }}
 
@@ -92,7 +92,7 @@ jobs:
           esac
           mv "$BIN" "./cloak-nerd-${OS}-${ARCH}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: nerd-${{ matrix.target }}
           path: cloak-nerd-*
@@ -105,9 +105,9 @@ jobs:
         goos: [linux, darwin]
         goarch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -119,7 +119,7 @@ jobs:
         run: |
           go build -ldflags="-s -w" -o "cloak-${{ matrix.goos }}-${{ matrix.goarch }}" ./cmd/cloak/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cloak-${{ matrix.goos }}-${{ matrix.goarch }}
           path: cloak-*
@@ -129,10 +129,10 @@ jobs:
     needs: [nerd-linux, nerd-macos, cloak]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       # Download all artifacts into a flat directory.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           path: ./release-assets/
           merge-multiple: true
@@ -147,7 +147,7 @@ jobs:
           cat checksums.txt
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
           name: "${{ github.ref_name }}"
           body: |
@@ -164,11 +164,7 @@ jobs:
             ### Model
 
             The NER model is hosted on Hugging Face Hub ([drxc0/cloak-ner-v1](https://huggingface.co/drxc0/cloak-ner-v1)).
-            `cloak init` downloads it automatically — no manual download needed.
-
-            Two variants available:
-            - `--model edge` (default) — distilbert, INT8 quantized, ~50 MB
-            - `--model full` — deberta-v3-base, FP32, ~450 MB
+            `cloak init` downloads it automatically — no manual download needed (~130 MB).
 
             ### Quick start
 
@@ -177,14 +173,12 @@ jobs:
             curl -sSL "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/cloak-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" -o cloak
             chmod +x cloak
 
-            # 2. Install NER support (optional — model downloads from Hugging Face)
-            ./cloak init              # edge variant (default, ~50 MB)
-            ./cloak init --model full # full variant (~450 MB, more accurate)
+            # 2. Install NER support (model downloads from Hugging Face)
+            ./cloak init
 
             # 3. Redact
             ./cloak redact -t "Call John at +1 555-0198"
-            # With named-entity detection:
-            ./cloak redact --thorough file.log
+            ./cloak redact file.log
             ```
           files: ./release-assets/*
           fail_on_unmatched_files: true

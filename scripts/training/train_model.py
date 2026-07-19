@@ -242,9 +242,10 @@ def _build_compute_metrics():
         }
         for t in CLOAK_TYPES:
             t_lower = t.lower()
-            out[f"{t_lower}_precision"] = results.get(f"{t_lower}_precision", 0.0)  # type: ignore[arg-type]
-            out[f"{t_lower}_recall"] = results.get(f"{t_lower}_recall", 0.0)  # type: ignore[arg-type]
-            out[f"{t_lower}_f1"] = results.get(f"{t_lower}_f1", 0.0)  # type: ignore[arg-type]
+            per_type = results.get(t, {})  # type: ignore[arg-type]
+            out[f"{t_lower}_precision"] = per_type.get("precision", 0.0)
+            out[f"{t_lower}_recall"] = per_type.get("recall", 0.0)
+            out[f"{t_lower}_f1"] = per_type.get("f1", 0.0)
         return out
 
     return compute_metrics
@@ -275,14 +276,20 @@ def main() -> None:
         "--epochs", type=int, default=4, help="Number of training epochs"
     )
     parser.add_argument(
-        "--batch-size", type=int, default=32, help="Per-device training batch size"
+        "--batch-size", type=int, default=16, help="Per-device training batch size"
     )
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
     parser.add_argument(
         "--max-rows",
         type=int,
         default=None,
-        help="Cap rows per split (for fast smoke tests)",
+        help="Cap rows loaded across all splits (for fast smoke tests)",
+    )
+    parser.add_argument(
+        "--max-train-rows",
+        type=int,
+        default=None,
+        help="Cap rows in training split only (subsample for faster iteration)",
     )
     parser.add_argument(
         "--augment-dir",
@@ -307,8 +314,20 @@ def main() -> None:
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=min(8, os.cpu_count() or 1),
+        default=min(4, os.cpu_count() or 1),
         help="Dataloader worker processes (parallel batch collation)",
+    )
+    parser.add_argument(
+        "--gradient-accumulation-steps",
+        type=int,
+        default=1,
+        help="Accumulate gradients over N steps (simulates larger batch)",
+    )
+    parser.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        default=False,
+        help="Enable gradient checkpointing (trades ~20%% speed for ~40%% less VRAM)",
     )
     args = parser.parse_args()
 
@@ -337,6 +356,14 @@ def main() -> None:
         langs=langs,
     )
 
+    # Subsample train for faster iteration without touching val/test.
+    if args.max_train_rows and len(raw_ds["train"]) > args.max_train_rows:
+        import random
+        rng_train = random.Random(args.seed)
+        indices = rng_train.sample(range(len(raw_ds["train"])), args.max_train_rows)
+        raw_ds["train"] = raw_ds["train"].select(indices)
+        logger.info("Subsampled train to %d rows", args.max_train_rows)
+
     # Try fast first; fall back to slow if it fails.
     logger.info("Loading tokenizer: %s", args.backbone)
     try:
@@ -358,6 +385,10 @@ def main() -> None:
         id2label=ID2LABEL,
         label2id=LABEL2ID,
     )
+
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+        logger.info("  gradient checkpointing enabled (less VRAM, slightly slower)")
     # Print class distribution for sanity check.
     all_labels: Counter[str] = Counter()
     for row in raw_ds["train"]:
@@ -383,6 +414,7 @@ def main() -> None:
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size * 2,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         warmup_ratio=0.1,
         weight_decay=0.01,
         fp16=torch.cuda.is_available(),
@@ -395,7 +427,6 @@ def main() -> None:
         report_to="none",
         save_total_limit=2,
         dataloader_drop_last=False,
-        group_by_length=True,  # batch similar-length rows — less padded compute
         dataloader_num_workers=args.num_workers,
         dataloader_pin_memory=True,
     )
@@ -408,7 +439,6 @@ def main() -> None:
         train_dataset=encoded_ds["train"],
         eval_dataset=encoded_ds["validation"],
         data_collator=data_collator,
-        tokenizer=tokenizer,
         compute_metrics=_build_compute_metrics(),
         callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
     )

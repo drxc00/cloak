@@ -3,7 +3,7 @@ package pipeline
 type Config struct {
 	EnabledTypes     map[string]bool
 	EntropyThreshold float64
-	Thorough         bool // enables the LLM fallback stage
+	Thorough         bool // enables the NER stage (cloak-nerd sidecar)
 	DryRun           bool
 }
 
@@ -15,9 +15,11 @@ func defaultConfig() *Config {
 			"JWT": true, "PRIVATE_KEY": true, "TOKEN": true,
 			"API_KEY": true, "CREDENTIALS": true,
 
-			// NER-stage entity types — produced when cloak-nerd is installed
+			// NER-stage entity types — produced when cloak-nerd (--thorough) is installed.
+			// Core-3: the token classifier only emits NAME, ADDRESS, USERNAME.
 			"NAME": true, "USERNAME": true, "ADDRESS": true,
-			// NOTE: HOSTNAME and ORGANIZATION are retired
+			// HOSTNAME and ORGANIZATION are kept as valid --disable targets but
+			// the Core-3 model never emits them (they were retired from the label set).
 			"HOSTNAME": true, "ORGANIZATION": true,
 
 			// Secrets-stage vendor rules — keep in sync with secrets.Rules().
@@ -35,7 +37,7 @@ func defaultConfig() *Config {
 			"REPLICATE_API_TOKEN": true,
 			"DATADOG_API_KEY":     true, "MAILGUN_API_KEY": true,
 			"VAULT_TOKEN": true, "LINEAR_API_KEY": true, "AGE_SECRET_KEY": true,
-			"GENERIC_API_KEY": true,
+			"GENERIC_API_KEY": true, "PASSWORD": true,
 		},
 		EntropyThreshold: 3.5,
 	}

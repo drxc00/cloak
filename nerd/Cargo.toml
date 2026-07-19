@@ -21,7 +21,6 @@ ort = "2.0.0-rc.12"
 ndarray = "0.17"
 # Tokenizer — HuggingFace tokenizers in Rust
 tokenizers = "0.21"
-# Word-level pre-tokenization (must match GLiNER's WhitespaceTokenSplitter)
-regex = "1"
+
 # Error handling
 anyhow = "1"

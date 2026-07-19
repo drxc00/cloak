@@ -1,4 +1,4 @@
-.PHONY: all build test nerd clean init-dev model-data model-train model-train-edge model-train-full model-export model-export-edge model-export-full model-parity model-parity-edge model-parity-full model-benchmark model-benchmark-edge model-benchmark-full model-upload model-pipeline
+.PHONY: all build test nerd clean init-dev model-data model-train model-export model-parity model-benchmark model-upload model-pipeline
 
 # Default target.
 all: build
@@ -43,98 +43,64 @@ model-data:
 		--in data/combined.jsonl --out-dir data/ \
 		--train 0.80 --val 0.10 --test 0.10 --seed 42
 
-# --- Train one or both model variants ---
+# --- Train ---
 #
-# edge: distilbert-base-multilingual-cased  →  trained-edge/
-# full: microsoft/deberta-v3-base           →  trained-full/
+# distilbert-base-multilingual-cased → trained/
+# Tune BATCH_SIZE/MAX_LEN/MAX_TRAIN_ROWS for your GPU.
+#
+# Quick iteration (smoke test, ~2 min):
+#   MAX_TRAIN_ROWS=2000 EPOCHS=1 make model-train
+#
+# Decent model (50K rows, 4 epochs, ~45 min on 4GB):
+#   MAX_TRAIN_ROWS=50000 make model-train
+#
+# Full dataset (465K rows, 4 epochs, ~8 hr on 4GB):
+#   make model-train
 
-model-train-edge:
+BATCH_SIZE ?= 16
+MAX_LEN    ?= 128
+EPOCHS     ?= 4
+MAX_TRAIN_ROWS ?= 0
+
+_TRAIN_ROWS_FLAG = $(if $(filter 0,$(MAX_TRAIN_ROWS)),,$(if $(MAX_TRAIN_ROWS),--max-train-rows $(MAX_TRAIN_ROWS)))
+
+model-train:
 	python3 -m venv /tmp/model-train-venv
 	/tmp/model-train-venv/bin/pip install -r scripts/training/requirements.txt
 	/tmp/model-train-venv/bin/python scripts/training/train_model.py \
 		--backbone distilbert-base-multilingual-cased \
-		--out ./trained-edge/ \
+		--out ./trained/ \
 		--data-dir ./data/ \
+		--batch-size $(BATCH_SIZE) \
+		--max-len $(MAX_LEN) \
+		--epochs $(EPOCHS) \
+		$(_TRAIN_ROWS_FLAG) \
 		--seed 42
 
-model-train-full:
-	python3 -m venv /tmp/model-train-venv
-	/tmp/model-train-venv/bin/pip install -r scripts/training/requirements.txt
-	/tmp/model-train-venv/bin/python scripts/training/train_model.py \
-		--backbone microsoft/deberta-v3-base \
-		--out ./trained-full/ \
-		--data-dir ./data/ \
-		--seed 42
+# --- Export to ONNX (INT8 quantized) ---
 
-model-train: model-train-edge model-train-full
-
-# --- Export to ONNX ---
-#
-# edge: INT8 quantized  →  model-export-edge/
-# full: FP32             →  model-export-full/
-
-model-export-edge:
+model-export:
 	python3 -m venv /tmp/model-export-venv
 	/tmp/model-export-venv/bin/pip install -r scripts/requirements.txt
 	/tmp/model-export-venv/bin/python scripts/export_model.py \
-		--checkpoint ./trained-edge/ \
-		--out ./model-export-edge/ \
+		--checkpoint ./trained/ \
+		--out ./model-export/ \
 		--quantize
-
-model-export-full:
-	/tmp/model-export-venv/bin/python scripts/export_model.py \
-		--checkpoint ./trained-full/ \
-		--out ./model-export-full/
-
-model-export: model-export-edge model-export-full
 
 # --- Parity check (PyTorch vs ONNX) ---
 
-model-parity-edge:
+model-parity:
 	/tmp/model-export-venv/bin/python scripts/parity_check.py \
-		--checkpoint ./trained-edge/ \
-		--onnx ./model-export-edge/
-
-model-parity-full:
-	/tmp/model-export-venv/bin/python scripts/parity_check.py \
-		--checkpoint ./trained-full/ \
-		--onnx ./model-export-full/
-
-model-parity: model-parity-edge model-parity-full
+		--checkpoint ./trained/ \
+		--onnx ./model-export/
 
 # --- Benchmark against test cases ---
 
-model-benchmark-edge:
+model-benchmark:
 	/tmp/model-export-venv/bin/python scripts/benchmark_model.py \
-		--model-dir ./model-export-edge/ \
+		--model-dir ./model-export/ \
 		--cases testdata/benchmark_cases.jsonl \
 		--nerd-bin ./bin/cloak-nerd
-
-model-benchmark-full:
-	/tmp/model-export-venv/bin/python scripts/benchmark_model.py \
-		--model-dir ./model-export-full/ \
-		--cases testdata/benchmark_cases.jsonl \
-		--nerd-bin ./bin/cloak-nerd
-
-model-benchmark: model-benchmark-edge model-benchmark-full
-
-# --- Upload models to Hugging Face Hub ---
-#
-# Requires HF write access. Set HF_REPO (or use the default).
-# Run 'huggingface-cli login' first to authenticate.
-HF_REPO ?= drxc0/cloak-ner-v1
-
-model-upload:
-	python3 -m venv /tmp/model-upload-venv
-	/tmp/model-upload-venv/bin/pip install huggingface_hub
-	/tmp/model-upload-venv/bin/python -c '\
-		import os;\
-		from huggingface_hub import HfApi;\
-		repo = os.environ.get("HF_REPO", "$(HF_REPO)");\
-		api = HfApi();\
-		api.upload_folder(folder_path="./model-export-edge", repo_id=repo, path_in_repo="edge");\
-		api.upload_folder(folder_path="./model-export-full", repo_id=repo, path_in_repo="full");\
-		print("✓ Edge + Full uploaded to " + repo)'
 
 # Full training pipeline from data to benchmark.
 model-pipeline: model-data model-train model-export model-parity model-benchmark
@@ -143,38 +109,33 @@ init-dev: build nerd
 	@mkdir -p $$HOME/.cache/cloak/bin
 	@mkdir -p $$HOME/.cache/cloak/models
 	cp bin/cloak-nerd $$HOME/.cache/cloak/bin/cloak-nerd
-	@if [ -f model-export-edge/model.onnx ]; then \
-		cp model-export-edge/model.onnx $$HOME/.cache/cloak/models/model.onnx; \
-		cp model-export-edge/tokenizer.json $$HOME/.cache/cloak/models/tokenizer.json; \
-		cp model-export-edge/model_config.json $$HOME/.cache/cloak/models/model_config.json; \
-		echo "edge" > $$HOME/.cache/cloak/models/variant.txt; \
-		echo "✓ Edge model copied from model-export-edge/"; \
-	elif [ -f model-export-full/model.onnx ]; then \
-		cp model-export-full/model.onnx $$HOME/.cache/cloak/models/model.onnx; \
-		cp model-export-full/tokenizer.json $$HOME/.cache/cloak/models/tokenizer.json; \
-		cp model-export-full/model_config.json $$HOME/.cache/cloak/models/model_config.json; \
-		echo "full" > $$HOME/.cache/cloak/models/variant.txt; \
-		echo "✓ Full model copied from model-export-full/"; \
+	@if [ -f model-export/model.onnx ]; then \
+		cp model-export/model.onnx $$HOME/.cache/cloak/models/model.onnx; \
+		cp model-export/tokenizer.json $$HOME/.cache/cloak/models/tokenizer.json; \
+		cp model-export/model_config.json $$HOME/.cache/cloak/models/model_config.json; \
+		echo "✓ Model copied from model-export/"; \
 	else \
 		echo "⚠  Run 'make model-train model-export' first to produce model files"; \
 	fi
-	@echo "✓ Dev environment ready — use 'bin/cloak redact --thorough ...'"
+	@echo "✓ Dev environment ready — use 'bin/cloak redact ...'"
 
 release-snapshot: build nerd
 	@echo "=== Release snapshot ==="
 	@echo "Data:    make model-data"
-	@echo "Train:   make model-train  (both edge + full)"
-	@echo "Export:  make model-export (both variants)"
+	@echo "Train:   make model-train"
+	@echo "Export:  make model-export"
 	@echo "Parity:  make model-parity"
 	@echo "Bench:   make model-benchmark"
 	@echo "Upload:  make model-upload"
 	@echo "Rust:    built → bin/cloak-nerd"
 	@echo "Go:      built → bin/cloak"
-	@echo "Assets:  model-export-edge/{model.onnx,tokenizer.json,model_config.json}"
-	@echo "         model-export-full/{model.onnx,tokenizer.json,model_config.json}"
+	@echo "Assets:  model-export/{model.onnx,tokenizer.json,model_config.json}"
 	@echo "         bin/cloak, bin/cloak-nerd"
 
 clean:
-	rm -rf bin/ model-export/ model-export-edge/ model-export-full/ \
-		trained/ trained-edge/ trained-full/ onnx-*/ augmented/ data/
+	rm -rf bin/ augmented/ data/
 	cd nerd && cargo clean
+
+# clean-all removes trained models and exports too — only run if you mean it.
+clean-all: clean
+	rm -rf model-export/ trained/ onnx-*/

@@ -241,9 +241,10 @@ fn run_inference(
     threshold: f32,
     max_spans: usize,
 ) -> Result<Response> {
-    // 1. Tokenize with byte offsets.
+    // 1. Tokenize with byte offsets. add_special_tokens=true: the model was
+    // trained with [CLS]/[SEP]; omitting them shifts every prediction.
     let encoding = tokenizer
-        .encode(text, false) // add_special_tokens=true by default
+        .encode(text, true)
         .map_err(|e| anyhow::anyhow!("tokenizer encode failed: {e}"))?;
 
     let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
@@ -388,7 +389,7 @@ fn run_inference_windowed(
     // Quick check: if text fits in one window, just run it.
     // Tokenize once to see how many tokens it takes.
     let full_enc = tokenizer
-        .encode(text, false)
+        .encode(text, true)
         .map_err(|e| anyhow::anyhow!("tokenizer encode failed: {e}"))?;
     let full_len = full_enc.len();
 

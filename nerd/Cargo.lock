@@ -202,7 +202,6 @@ dependencies = [
  "clap",
  "ndarray",
  "ort",
- "regex",
  "serde",
  "serde_json",
  "tokenizers",

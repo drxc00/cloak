@@ -162,12 +162,22 @@ func TestVendorRules_Regex(t *testing.T) {
 			tp: []string{
 				`api_key = "abcdefghijklmnopqrstuvwxyz0123456789"`,
 				`token: abcdefghijklmnopqrstuvwxyz0123456789`,
-				`password := "SuperSecret2345678"`,
 			},
 			fp: []string{
 				`api_version = "1.0.0"`, // too short (<10 chars secret)
 				`token = "example"`,     // stopword
 				`key = "onlyletters"`,   // alphabetic-only regex suppresses
+			},
+		},
+		{
+			ruleType: "PASSWORD",
+			tp: []string{
+				`password := "SuperSecret2345678"`,
+				`pass=SuperSecret123!`,
+			},
+			fp: []string{
+				`password = "example"`, // stopword
+				`pass = "onlyletters"`, // alphabetic-only, low entropy
 			},
 		},
 	}

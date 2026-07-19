@@ -2,6 +2,19 @@ package secrets
 
 import "regexp"
 
+// genericSecretRegex builds the shared key[=:]value pattern used by the
+// keyword-driven rules (PASSWORD, GENERIC_API_KEY), parameterized by the
+// key-stem alternation so each rule can scope its own keyword set.
+func genericSecretRegex(keyStems string) *regexp.Regexp {
+	return regexp.MustCompile(
+		`(?i)[\w.-]{0,50}?(?:` + keyStems + `)[\w.-]{0,50}(?:[ \t\w.-]{0,20})[\s'"]{0,3}` +
+			`(?:=|>|:{1,3}=|\|\||:|=>|\?=|,)` +
+			`[\s='"]{0,5}` +
+			`([\w.=-]{10,150}|[a-z0-9][a-z0-9+/]{11,}={0,3})` +
+			`(?:[\s'";,.!?)\]}]|\\[nr]|$)`,
+	)
+}
+
 func Rules() []Rule {
 	return []Rule{
 		{
@@ -285,22 +298,22 @@ func Rules() []Rule {
 			MinEntropy:  3.0,
 		},
 		{
+			Type:        "PASSWORD",
+			Keywords:    []string{"password", "passwd", "pass"},
+			Regex:       genericSecretRegex(`pass(?:w(?:or)?d)?`),
+			SecretGroup: 1,
+			MinEntropy:  3.0,
+			Allowlist:   genericAllowlist(),
+		},
+		{
 			Type: "GENERIC_API_KEY",
 			Keywords: []string{
-				"api", "key", "token", "secret", "password", "passwd",
+				"api", "key", "token", "secret",
 				"credential", "creds", "auth", "access",
 			},
-			Regex: regexp.MustCompile(
-				`(?i)[\w.-]{0,50}?(?:` +
-					`access|auth|api|credential|creds|key|passw(?:or)?d|secret|token` +
-					`)[\w.-]{0,50}(?:[ \t\w.-]{0,20})[\s'"]{0,3}` +
-					`(?:=|>|:{1,3}=|\|\||:|=>|\?=|,)` +
-					`[\s='"]{0,5}` +
-					`([\w.=-]{10,150}|[a-z0-9][a-z0-9+/]{11,}={0,3})` +
-					`(?:[\s'";]|\\[nr]|$)`,
-			),
+			Regex:       genericSecretRegex(`access|auth|api|credential|creds|key|secret|token`),
 			SecretGroup: 1,
-			MinEntropy:  3.5,
+			MinEntropy:  3.0,
 			Allowlist:   genericAllowlist(),
 		},
 		{

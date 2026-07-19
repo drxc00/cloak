@@ -2,8 +2,8 @@
 """
 Export a trained fixed-label token classifier to ONNX.
 
-Replaces the GLiNER export path with standard token-classification export
-via optimum-cli.  Supports optional INT8 dynamic quantization.
+Uses optimum-cli for standard token-classification export.
+Supports optional INT8 dynamic quantization.
 
 Produces in the output directory:
   model.onnx          — ONNX graph (FP32, or INT8 if --quantize)
